@@ -44,3 +44,5 @@ Test: big static memory
 Examine the use of taskstats for measuring memory
 Doc: mount -t cgroup none -o cpuset,cpuacct,memory /sys/fs/cgroup
 Switch license to GPL2/GPL3
+Options for specifying real-time scheduling
+Setting of general cgroup attributes, like CPU pinning
