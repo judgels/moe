@@ -25,7 +25,7 @@ sub create_template($$$$) {
 		"$taskdir/$task/$task.cpp" => "$task.cpp",
 	},
 	pas => {
-		"$where/template-pas.lpi" => "${task}_main.lpi",
+		"$where/template-pas.lpi" => "${task}.lpi",
 		"$taskdir/$task/$task.pas" => "$task.pas",
 	}
     );
@@ -60,8 +60,8 @@ sub open_project($) {
 
 sub existing_projects($) {
     my ($lopen_data,$lang)=@_;
-    foreach ((glob "$home/*/*.cbp"), (glob "$home/*/*.lpr")) {
-	my ($name, $task) = m#.*/(.*?)/(.*)(_main\.lpr|\.cbp)#;
+    foreach ((glob "$home/*/*.cbp"), (glob "$home/*/*.lpi")) {
+	my ($name, $task) = m#.*/(.*?)/(.*)(\.lpi|\.cbp)#;
 	print "$name $task\n";
 	$lang=-f "$home/$name/$task.c" ? 'C' : -f "$home/$name/$task.cpp" ? 'C++' : -f "$home/$name/$task.pas" ? 'Pascal' : '';
 	$lopen_data->set($lopen_data->append, 0, "$1", 1, $lang);
