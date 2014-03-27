@@ -18,20 +18,15 @@ sub create_template($$$$) {
 		"$where/template-c.cbp" => "$task.cbp",
 		"$where/template.layout" => "$task.layout",
 		"$taskdir/$task/$task.c" => "$task.c",
-		"$taskdir/$task/$task-main.c" => "$task-main.c",
-		"$taskdir/$task/$task.h" => "$task.h",
 	},
 	cpp => {
 		"$where/template-cpp.cbp" => "$task.cbp",
 		"$where/template.layout" => "$task.layout",
 		"$taskdir/$task/$task.cpp" => "$task.cpp",
-		"$taskdir/$task/$task-main.cpp" => "$task-main.cpp",
-		"$taskdir/$task/$task.h" => "$task.h",
 	},
 	pas => {
 		"$where/template-pas.lpi" => "${task}_main.lpi",
 		"$taskdir/$task/$task.pas" => "$task.pas",
-		"$taskdir/$task/${task}_main.pas" => "${task}_main.lpr",
 	}
     );
     my $files = $files{$ext} // die "Unknown ext $ext\n";

@@ -38,19 +38,14 @@
         <PackageName Value="LCL"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="2">
+    <Units Count="1">
       <Unit0>
-        <Filename Value="tASk_main.lpr"/>
-        <IsPartOfProject Value="True"/>
-        <UnitName Value="tASk_main"/>
-      </Unit0>
-      <Unit1>
         <Filename Value="tASk.pas"/>
         <IsPartOfProject Value="True"/>
         <ComponentName Value="Form1"/>
         <ResourceBaseClass Value="Form"/>
         <UnitName Value="tASk"/>
-      </Unit1>
+      </Unit0>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

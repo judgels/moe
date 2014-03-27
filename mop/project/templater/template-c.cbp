@@ -36,13 +36,9 @@
 		<Linker>
 			<Add option="-lm" />
 		</Linker>
-		<Unit filename="tASk-main.c">
-			<Option compilerVar="CC" />
-		</Unit>
 		<Unit filename="tASk.c">
 			<Option compilerVar="CC" />
 		</Unit>
-		<Unit filename="tASk.h" />
 		<Extensions>
 			<envvars />
 			<code_completion />

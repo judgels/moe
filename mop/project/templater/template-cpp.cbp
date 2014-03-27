@@ -36,13 +36,9 @@
 		<Linker>
 			<Add option="-lm" />
 		</Linker>
-		<Unit filename="tASk-main.cpp">
-			<Option compilerVar="CPP" />
-		</Unit>
 		<Unit filename="tASk.cpp">
 			<Option compilerVar="CPP" />
 		</Unit>
-		<Unit filename="tASk.h" />
 		<Extensions>
 			<envvars />
 			<code_completion />
