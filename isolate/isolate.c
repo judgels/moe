@@ -20,6 +20,7 @@
 #include <getopt.h>
 #include <sched.h>
 #include <time.h>
+#include <ftw.h>
 #include <grp.h>
 #include <mntent.h>
 #include <limits.h>
@@ -63,7 +64,7 @@ static uid_t orig_uid;
 static gid_t orig_gid;
 
 static int partial_line;
-static char cleanup_cmd[256];
+static int cleanup_ownership;
 
 static struct timeval start_time;
 static int ticks_per_sec;
@@ -78,6 +79,8 @@ static void die(char *msg, ...) NONRET;
 static void cg_stats(void);
 static int get_wall_time_ms(void);
 static int get_run_time_ms(struct rusage *rus);
+
+static void chowntree(char *path, uid_t uid, gid_t gid);
 
 /*** Meta-files ***/
 
@@ -132,16 +135,6 @@ final_stats(struct rusage *rus)
 
 /*** Messages and exits ***/
 
-static void
-xsystem(const char *cmd)
-{
-  int ret = system(cmd);
-  if (ret < 0)
-    die("system(\"%s\"): %m", cmd);
-  if (!WIFEXITED(ret) || WEXITSTATUS(ret))
-    die("system(\"%s\"): Exited with status %d", cmd, ret);
-}
-
 static void NONRET
 box_exit(int rc)
 {
@@ -162,8 +155,10 @@ box_exit(int rc)
 	final_stats(&rus);
     }
 
-  if (rc < 2 && cleanup_cmd[0])
-    xsystem(cleanup_cmd);
+  if (rc < 2 && cleanup_ownership)
+    {
+      chowntree("box", orig_uid, orig_gid);
+    }
 
   meta_close();
   exit(rc);
@@ -263,6 +258,47 @@ static int dir_exists(char *path)
 {
   struct stat st;
   return (stat(path, &st) >= 0 && S_ISDIR(st.st_mode));
+}
+
+static int rmtree_helper(const char *fpath, const struct stat *sb,
+    int typeflag, struct FTW *ftwbuf)
+{
+  if (S_ISDIR(sb->st_mode))
+    {
+      if (rmdir(fpath) < 0)
+	die("Cannot rmdir %s: %m", fpath);
+    }
+  else
+    {
+      if (unlink(fpath) < 0)
+	die("Cannot unlink %s: %m", fpath);
+    }
+  return FTW_CONTINUE;
+}
+
+static void
+rmtree(char *path)
+{
+  nftw(path, rmtree_helper, 32, FTW_MOUNT | FTW_PHYS | FTW_DEPTH);
+}
+
+static uid_t chown_uid;
+static gid_t chown_gid;
+static int chowntree_helper(const char *fpath, const struct stat *sb,
+    int typeflag, struct FTW *ftwbuf)
+{
+  if (lchown(fpath, chown_uid, chown_gid) < 0)
+    die("Cannot chown %s: %m", fpath);
+  else
+    return FTW_CONTINUE;
+}
+
+static void
+chowntree(char *path, uid_t uid, gid_t gid)
+{
+  chown_uid = uid;
+  chown_gid = gid;
+  nftw(path, chowntree_helper, 32, FTW_MOUNT | FTW_PHYS);
 }
 
 /*** Environment rules ***/
@@ -580,12 +616,52 @@ static void apply_dir_rules(void)
 
 /*** Control groups ***/
 
-static char cg_path[256];
+struct cg_controller_desc {
+  const char *name;
+  int optional;
+};
+
+typedef enum {
+  CG_MEMORY = 0,
+  CG_CPUACCT,
+  CG_CPUSET,
+  CG_NUM_CONTROLLERS,
+} cg_controller;
+
+static const struct cg_controller_desc cg_controllers[CG_NUM_CONTROLLERS+1] = {
+  [CG_MEMORY]  = { "memory",  0 },
+  [CG_CPUACCT] = { "cpuacct", 0 },
+  [CG_CPUSET]  = { "cpuset",  1 },
+  [CG_NUM_CONTROLLERS] = { NULL, 0 },
+};
+
+#define FOREACH_CG_CONTROLLER(_controller) \
+  for (cg_controller (_controller) = 0; \
+      (_controller) < CG_NUM_CONTROLLERS; (_controller)++)
+
+static const char *cg_controller_name(cg_controller c)
+{
+  return cg_controllers[c].name;
+}
+
+static const int cg_controller_optional(cg_controller c)
+{
+  return cg_controllers[c].optional;
+}
+
+static char cg_name[256];
 
 #define CG_BUFSIZE 1024
 
+static void
+cg_makepath(char *buf, size_t len, cg_controller c, const char *attr)
+{
+  const char *cg_root = CONFIG_ISOLATE_CGROUP_ROOT;
+  snprintf(buf, len, "%s/%s/%s/%s", cg_root, cg_controller_name(c), cg_name, attr);
+}
+
 static int
-cg_read(char *attr, char *buf)
+cg_read(cg_controller controller, const char *attr, char *buf)
 {
   int maybe = 0;
   if (attr[0] == '?')
@@ -595,7 +671,7 @@ cg_read(char *attr, char *buf)
     }
 
   char path[256];
-  snprintf(path, sizeof(path), "%s/%s", cg_path, attr);
+  cg_makepath(path, sizeof(path), controller, attr);
 
   int fd = open(path, O_RDONLY);
   if (fd < 0)
@@ -607,7 +683,11 @@ cg_read(char *attr, char *buf)
 
   int n = read(fd, buf, CG_BUFSIZE);
   if (n < 0)
-    die("Cannot read %s: %m", path);
+    {
+      if (maybe)
+	return 0;
+      die("Cannot read %s: %m", path);
+    }
   if (n >= CG_BUFSIZE - 1)
     die("Attribute %s too long", path);
   if (n > 0 && buf[n-1] == '\n')
@@ -621,30 +701,47 @@ cg_read(char *attr, char *buf)
   return 1;
 }
 
-static void __attribute__((format(printf,2,3)))
-cg_write(char *attr, char *fmt, ...)
+static void __attribute__((format(printf,3,4)))
+cg_write(cg_controller controller, const char *attr, const char *fmt, ...)
 {
+  int maybe = 0;
+  if (attr[0] == '?')
+    {
+      attr++;
+      maybe = 1;
+    }
+
   va_list args;
   va_start(args, fmt);
 
   char buf[CG_BUFSIZE];
   int n = vsnprintf(buf, sizeof(buf), fmt, args);
   if (n >= CG_BUFSIZE)
-    die("cg_writef: Value for attribute %s is too long", attr);
+    die("cg_write: Value for attribute %s is too long", attr);
 
   if (verbose > 1)
     msg("CG: Write %s = %s", attr, buf);
 
   char path[256];
-  snprintf(path, sizeof(path), "%s/%s", cg_path, attr);
+  cg_makepath(path, sizeof(path), controller, attr);
 
   int fd = open(path, O_WRONLY | O_TRUNC);
   if (fd < 0)
-    die("Cannot write %s: %m", path);
+    {
+      if (maybe)
+	return;
+      else
+	die("Cannot write %s: %m", path);
+    }
 
   int written = write(fd, buf, n);
   if (written < 0)
-    die("Cannot set %s to %s: %m", path, buf);
+    {
+      if (maybe)
+	return;
+      else
+	die("Cannot set %s to %s: %m", path, buf);
+    }
   if (written != n)
     die("Short write to %s (%d out of %d bytes)", path, written, n);
 
@@ -662,8 +759,8 @@ cg_init(void)
   if (!dir_exists(cg_root))
     die("Control group filesystem at %s not mounted", cg_root);
 
-  snprintf(cg_path, sizeof(cg_path), "%s/box-%d", cg_root, box_id);
-  msg("Using control group %s\n", cg_path);
+  snprintf(cg_name, sizeof(cg_name), "box-%d", box_id);
+  msg("Using control group %s\n", cg_name);
 }
 
 static void
@@ -674,22 +771,27 @@ cg_prepare(void)
 
   struct stat st;
   char buf[CG_BUFSIZE];
+  char path[256];
 
-  if (stat(cg_path, &st) >= 0 || errno != ENOENT)
+  FOREACH_CG_CONTROLLER(controller)
     {
-      msg("Control group %s already exists, trying to empty it.\n", cg_path);
-      if (rmdir(cg_path) < 0)
-	die("Failed to reset control group %s: %m", cg_path);
+      cg_makepath(path, sizeof(path), controller, "");
+      if (stat(path, &st) >= 0 || errno != ENOENT)
+	{
+	  msg("Control group %s already exists, trying to empty it.\n", path);
+	  if (rmdir(path) < 0)
+	    die("Failed to reset control group %s: %m", path);
+	}
+
+      if (mkdir(path, 0777) < 0 && !cg_controller_optional(controller))
+	die("Failed to create control group %s: %m", path);
     }
 
-  if (mkdir(cg_path, 0777) < 0)
-    die("Failed to create control group %s: %m", cg_path);
-
   // If cpuset module is enabled, copy allowed cpus and memory nodes from parent group
-  if (cg_read("?../cpuset.cpus", buf))
-    cg_write("cpuset.cpus", "%s", buf);
-  if (cg_read("?../cpuset.mems", buf))
-    cg_write("cpuset.mems", "%s", buf);
+  if (cg_read(CG_CPUSET, "?cpuset.cpus", buf))
+    cg_write(CG_CPUSET, "cpuset.cpus", "%s", buf);
+  if (cg_read(CG_CPUSET, "?cpuset.mems", buf))
+    cg_write(CG_CPUSET, "cpuset.mems", "%s", buf);
 }
 
 static void
@@ -698,22 +800,24 @@ cg_enter(void)
   if (!cg_enable)
     return;
 
-  msg("Entering control group %s\n", cg_path);
+  msg("Entering control group %s\n", cg_name);
 
-  struct stat st;
-  if (stat(cg_path, &st) < 0)
-    die("Control group %s does not exist: %m", cg_path);
+  FOREACH_CG_CONTROLLER(controller)
+    {
+      if (cg_controller_optional(controller))
+	cg_write(controller, "?tasks", "%d\n", (int) getpid());
+      else
+	cg_write(controller, "tasks", "%d\n", (int) getpid());
+    }
 
   if (cg_memory_limit)
     {
-      cg_write("memory.limit_in_bytes", "%lld\n", (long long) cg_memory_limit << 10);
-      cg_write("memory.memsw.limit_in_bytes", "%lld\n", (long long) cg_memory_limit << 10);
+      cg_write(CG_MEMORY, "memory.limit_in_bytes", "%lld\n", (long long) cg_memory_limit << 10);
+      cg_write(CG_MEMORY, "?memory.memsw.limit_in_bytes", "%lld\n", (long long) cg_memory_limit << 10);
     }
 
   if (cg_timing)
-    cg_write("cpuacct.usage", "0\n");
-
-  cg_write("tasks", "%d\n", (int) getpid());
+    cg_write(CG_CPUACCT, "cpuacct.usage", "0\n");
 }
 
 static int
@@ -723,7 +827,7 @@ cg_get_run_time_ms(void)
     return 0;
 
   char buf[CG_BUFSIZE];
-  cg_read("cpuacct.usage", buf);
+  cg_read(CG_CPUACCT, "cpuacct.usage", buf);
   unsigned long long ns = atoll(buf);
   return ns / 1000000;
 }
@@ -738,9 +842,9 @@ cg_stats(void)
 
   // Memory usage statistics
   unsigned long long mem=0, memsw=0;
-  if (cg_read("?memory.max_usage_in_bytes", buf))
+  if (cg_read(CG_MEMORY, "?memory.max_usage_in_bytes", buf))
     mem = atoll(buf);
-  if (cg_read("?memory.memsw.max_usage_in_bytes", buf))
+  if (cg_read(CG_MEMORY, "?memory.memsw.max_usage_in_bytes", buf))
     {
       memsw = atoll(buf);
       if (memsw > mem)
@@ -758,12 +862,24 @@ cg_remove(void)
   if (!cg_enable)
     return;
 
-  cg_read("tasks", buf);
-  if (buf[0])
-    die("Some tasks left in control group %s, failed to remove it", cg_path);
+  FOREACH_CG_CONTROLLER(controller)
+    {
+      if (cg_controller_optional(controller)) {
+	if (!cg_read(controller, "?tasks", buf))
+	  continue;
+      } else
+	cg_read(controller, "tasks", buf);
 
-  if (rmdir(cg_path) < 0)
-    die("Cannot remove control group %s: %m", cg_path);
+      if (buf[0])
+	die("Some tasks left in controller %s of cgroup %s, failed to remove it",
+	    cg_controller_name(controller), cg_name);
+
+      char path[256];
+      cg_makepath(path, sizeof(path), controller, "");
+
+      if (rmdir(path) < 0)
+	die("Cannot remove control group %s: %m", path);
+    }
 }
 
 /*** Disk quotas ***/
@@ -1162,7 +1278,7 @@ static void
 init(void)
 {
   msg("Preparing sandbox directory\n");
-  xsystem("rm -rf box");
+  rmtree("box");
   if (mkdir("box", 0700) < 0)
     die("Cannot create box: %m");
   if (chown("box", orig_uid, orig_gid) < 0)
@@ -1181,9 +1297,7 @@ cleanup(void)
     die("Box directory not found, there isn't anything to clean up");
 
   msg("Deleting sandbox directory\n");
-  xsystem("rm -rf *");
-  if (rmdir(box_dir) < 0)
-    die("Cannot remove %s: %m", box_dir);
+  rmtree(box_dir);
   cg_remove();
 }
 
@@ -1193,10 +1307,8 @@ run(char **argv)
   if (!dir_exists("box"))
     die("Box directory not found, did you run `isolate --init'?");
 
-  char cmd[256];
-  snprintf(cmd, sizeof(cmd), "chown -R %d.%d box", box_uid, box_gid);
-  xsystem(cmd);
-  snprintf(cleanup_cmd, sizeof(cleanup_cmd), "chown -R %d.%d box", orig_uid, orig_gid);
+  chowntree("box", box_uid, box_gid);
+  cleanup_ownership = 1;
 
   if (pipe(error_pipes) < 0)
     die("pipe: %m");
