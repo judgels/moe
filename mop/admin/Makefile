@@ -8,7 +8,7 @@ PROGS+=$(addprefix $(o)/mop/admin/,\
 	mo-install mo-create-contestants mo-create-eval mo-create-logins \
 	mo-create-public mo-create-submit mo-create-testusers \
 	mo-grab mo-back-grab mo-grab-remote \
-	mo-push-certs mo-push-feedback)
+	mo-push-certs mo-push-feedback mo-cms-users)
 
 $(o)/mop/admin/md5crypt: $(o)/mop/admin/md5crypt.o $(LIBUCW)
 
@@ -26,3 +26,4 @@ $(o)/mop/admin/mo-grab: $(s)/mop/admin/mo-grab.sh
 $(o)/mop/admin/mo-install: $(s)/mop/admin/mo-install.sh
 $(o)/mop/admin/mo-push-certs: $(s)/mop/admin/mo-push-certs.sh
 $(o)/mop/admin/mo-push-feedback: $(s)/mop/admin/mo-push-feedback.sh
+$(o)/mop/admin/mo-cms-users: $(s)/mop/admin/mo-cms-users.pl
