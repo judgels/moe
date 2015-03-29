@@ -14,9 +14,9 @@ CT_UID_MIN=65100
 CT_USER_LIST=cf/userlist
 
 # (optional) Use remote submitting
-REMOTE_SUBMIT=1
-REMOTE_SUBMIT_USER=mo-submit
-REMOTE_SUBMIT_GROUP=mo-submit
+#REMOTE_SUBMIT=1
+#REMOTE_SUBMIT_USER=mo-submit
+#REMOTE_SUBMIT_GROUP=mo-submit
 
 # Include configuration of the evaluator
 . cf/eval
