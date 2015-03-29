@@ -181,15 +181,6 @@ zvalue=0
 [Containments][8][Applets][15][Configuration]
 Url=file:///usr/share/applications/kde4/konsole.desktop
 
-[Containments][8][Applets][18]
-geometry=0,108,94,72
-immutability=1
-plugin=icon
-zvalue=0
-
-[Containments][8][Applets][18][Configuration]
-Url=file:///mo/desktop/contest.desktop
-
 [Containments][8][Applets][20]
 geometry=454,216,133,72
 immutability=1
@@ -216,6 +207,15 @@ zvalue=6
 
 [Containments][8][Applets][24][Configuration]
 Url=file:///mo/desktop/konqbrowser.desktop
+
+[Containments][8][Applets][30]
+geometry=11,110,134,72
+immutability=1
+plugin=icon
+zvalue=22
+
+[Containments][8][Applets][30][Configuration]
+Url=https://mo001
 
 [Containments][8][Wallpaper][image]
 slideTimer=10
