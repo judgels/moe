@@ -5,6 +5,11 @@
  *	(c) 2012-2014 Bernard Blackham <bernard@blackham.com.au>
  */
 
+/***********************************************************
+ ** This is not the master version of Isolate any longer. **
+ ** See https://github.com/ioi/isolate for its new home.  **
+ ***********************************************************/
+
 #define _GNU_SOURCE
 
 #include "autoconf.h"
